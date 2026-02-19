@@ -5,15 +5,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project Overview
 
 Python 3.13+ AWS Lambda 프로젝트. 레이어드 아키텍처 기반으로 구성되며 `uv`로 패키지를 관리한다.
+인프라는 AWS SAM(`template.yaml`)으로 정의하고, GitHub Actions로 CI/CD를 자동화한다.
 
 ## Commands
 
 ```bash
-# 의존성 설치
+# 의존성 설치 (dev 포함)
 uv sync
 
-# 패키지 추가
+# 패키지 추가 (런타임)
 uv add <package>
+
+# 패키지 추가 (dev 전용)
+uv add --dev <package>
 
 # 전체 테스트 실행
 uv run python -m pytest tests/
@@ -23,6 +27,12 @@ uv run python -m pytest tests/service/test_todo_service.py
 
 # 특정 테스트만 실행
 uv run python -m pytest tests/service/test_todo_service.py::TestCreateTodo::test_returns_repository_save_result
+
+# SAM 로컬 빌드
+sam build
+
+# SAM 배포 (수동)
+sam deploy --no-confirm-changeset --no-fail-on-empty-changeset --resolve-s3 --stack-name layered-architecture-example --capabilities CAPABILITY_IAM --region ap-northeast-2
 ```
 
 ## Architecture
@@ -51,3 +61,54 @@ lambda_function.py  →  container.py  →  presentation  →  service  →  rep
 4. `presentation/` — Controller 클래스 작성 (service 주입)
 5. `container.py` — `@cached_property` 3개 추가 (repository, service, controller)
 6. `lambda_function.py` — 라우팅 규칙 추가
+7. `template.yaml` 수정 불필요 — `/{proxy+}` catch-all이 모든 경로를 Lambda로 전달함
+
+## Infra (AWS SAM)
+
+### 구조
+
+```
+template.yaml  →  CloudFormation 스택 (layered-architecture-example)
+                    ├─ Lambda 함수 (layered-architecture-example)
+                    └─ API Gateway (/{proxy+} → Lambda Proxy Integration)
+```
+
+### 주요 파일
+
+- **`template.yaml`**: Lambda + API Gateway 인프라 정의. 런타임, 핸들러, 라우팅 설정 포함.
+- **`pyproject.toml`**: `[project].dependencies`는 런타임 의존성만. `[dependency-groups].dev`에 테스트 도구(pytest 등)를 관리. SAM build 시 dev 의존성은 Lambda 패키지에 포함되지 않는다.
+
+### API Gateway 라우팅 방식
+
+API Gateway는 `/{proxy+}` catch-all로 모든 요청을 Lambda 하나로 전달한다.
+라우팅 로직은 `lambda_function.py` 내부에서 처리하므로, 새 엔드포인트 추가 시 `template.yaml`은 변경하지 않는다.
+
+## CI/CD (GitHub Actions)
+
+### 파일 위치
+
+`.github/workflows/deploy.yml`
+
+### 흐름
+
+```
+main 브랜치 push
+  └─ test job:    uv sync → pytest
+  └─ deploy job:  (test 통과 시) sam build → sam deploy
+```
+
+### 필요한 GitHub Secrets
+
+| Secret | 설명 |
+|---|---|
+| `AWS_ACCESS_KEY_ID` | IAM 사용자 Access Key |
+| `AWS_SECRET_ACCESS_KEY` | IAM 사용자 Secret Key |
+
+### IAM 권한 (GitHub Actions용 IAM 사용자)
+
+SAM 배포에 필요한 AWS 관리형 정책:
+- `AWSCloudFormationFullAccess`
+- `AmazonS3FullAccess`
+- `AWSLambda_FullAccess`
+- `AmazonAPIGatewayAdministrator`
+- `IAMFullAccess`
