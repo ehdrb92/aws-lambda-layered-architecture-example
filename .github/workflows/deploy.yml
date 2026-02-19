@@ -40,21 +40,20 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ap-northeast-2
 
-      - name: Package Lambda
-        run: |
-          zip -r function.zip . \
-            --exclude ".venv/*" \
-            --exclude "tests/*" \
-            --exclude ".github/*" \
-            --exclude ".git/*" \
-            --exclude "*.pyc" \
-            --exclude "__pycache__/*" \
-            --exclude "pyproject.toml" \
-            --exclude "uv.lock" \
-            --exclude "README.md"
+      - name: Setup SAM CLI
+        uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
 
-      - name: Deploy to Lambda
+      - name: SAM Build
+        run: sam build
+
+      - name: SAM Deploy
         run: |
-          aws lambda update-function-code \
-            --function-name layered-architecture-example \
-            --zip-file fileb://function.zip
+          sam deploy \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset \
+            --resolve-s3 \
+            --stack-name layered-architecture-example \
+            --capabilities CAPABILITY_IAM \
+            --region ap-northeast-2
